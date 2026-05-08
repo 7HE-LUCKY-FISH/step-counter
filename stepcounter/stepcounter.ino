@@ -111,7 +111,11 @@ void enterLightSleep() {
 void setup() {
   Serial.begin(115200);
   M5.begin();
-  M5.Imu.Init();
+
+  //setCpuFrequencyMhz(80); drop CPU speed to save power default: 240
+  //M5.Axp.ScreenBreath(8); change brightness of screen save battery
+  
+   M5.Imu.Init();
   Wire1.begin(21, 22);
 
   M5.Lcd.setRotation(3);
