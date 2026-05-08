@@ -26,6 +26,7 @@
 #define HOURS_TRACKED   12
 #define UI_UPDATE_MS    200
 #define IDLE_SLEEP_MS   15000UL
+   // M5StickC battery capacity
 
 // Colors
 #define COLOR_BG        TFT_BLACK
@@ -37,6 +38,7 @@
 #define COLOR_GOAL      0xFFE0
 #define COLOR_WHITE     TFT_WHITE
 #define COLOR_DIM       0x7BEF
+#define COLOR_CHARGING  0xFD20   // Orange
 
 // MPU6886 registers for wake-on-motion
 #define MPU6886_ADDR    0x68
@@ -86,7 +88,7 @@ void imuWriteReg(uint8_t reg, uint8_t val) {
 }
 
 void enableMotionInterrupt() {
-  imuWriteReg(MPU6886_WOM_THR, 10);   // ~39mg threshold
+  imuWriteReg(MPU6886_WOM_THR, 10);
   imuWriteReg(MPU6886_MOT_DET, 0xC0);
   imuWriteReg(MPU6886_INT_EN,  0x40);
   esp_sleep_enable_ext0_wakeup(GPIO_NUM_36, 1);
@@ -260,22 +262,44 @@ void classifyActivity() {
 }
 
 
+float smoothedBatPct = -1;
+
+int getBatPct() {
+  float batV = M5.Axp.GetBatVoltage();
+  if (isCharging()) batV = min(batV, 4.2f);
+  float raw = constrain((batV - 3.0f) / (4.2f - 3.0f) * 100.0f, 0.0f, 100.0f);
+  if (smoothedBatPct < 0) smoothedBatPct = raw;
+  smoothedBatPct = smoothedBatPct * 0.9f + raw * 0.1f;
+  return (int)smoothedBatPct;
+}
+
+uint16_t batColor(int pct) {
+  if      (pct > 50) return COLOR_WALK;
+  else if (pct > 20) return COLOR_GOAL;
+  else               return COLOR_RUN;
+}
+
+bool isCharging() {
+  return M5.Axp.GetBatChargeCurrent() > 0;
+}
+
+
+
 void drawBattery() {
-  float batV   = M5.Axp.GetBatVoltage();
-  int   batPct = (int)constrain((batV - 3.0f) / (4.2f - 3.0f) * 100.0f, 0.0f, 100.0f);
+  int batPct = getBatPct();
 
-  M5.Lcd.fillRect(0, 0, 40, 10, COLOR_BG);
+  M5.Lcd.fillRect(0, 0, 55, 10, COLOR_BG);
   M5.Lcd.setTextSize(1);
-
-  uint16_t col;
-  if      (batPct > 50) col = COLOR_WALK;
-  else if (batPct > 20) col = COLOR_GOAL;
-  else                  col = COLOR_RUN;
-
-  M5.Lcd.setTextColor(col);
+  M5.Lcd.setTextColor(batColor(batPct));
   M5.Lcd.setCursor(0, 2);
   M5.Lcd.print(batPct);
   M5.Lcd.print("%");
+
+  if (isCharging()) {
+    M5.Lcd.setTextColor(COLOR_CHARGING);
+    M5.Lcd.setCursor(30, 2);
+    M5.Lcd.print("CHG");
+  }
 }
 
 
@@ -293,7 +317,7 @@ void drawFullScreen() {
 void drawStepsChrome() {
   M5.Lcd.setTextSize(1);
   M5.Lcd.setTextColor(COLOR_DIM);
-  M5.Lcd.setCursor(44, 4);
+  M5.Lcd.setCursor(5, 53);
   M5.Lcd.print("STEPS TODAY");
   drawScreenDots();
   M5.Lcd.drawRect(5, 62, 140, 10, COLOR_DIM);
@@ -304,22 +328,22 @@ void drawStepsChrome() {
 void drawCadenceChrome() {
   M5.Lcd.setTextSize(1);
   M5.Lcd.setTextColor(COLOR_DIM);
-  M5.Lcd.setCursor(44, 4);
+  M5.Lcd.setCursor(58, 4);
   M5.Lcd.print("CADENCE");
-  M5.Lcd.setCursor(90, 4);
-  M5.Lcd.print("steps/min");
+  M5.Lcd.setCursor(100, 4);
+  M5.Lcd.print("spm");
   drawScreenDots();
-  M5.Lcd.drawFastHLine(0, 50, 160, COLOR_DIM);
-  M5.Lcd.setCursor(5, 55);
+  M5.Lcd.setCursor(5, 42);
   M5.Lcd.print("TOTAL");
-  M5.Lcd.setCursor(90, 55);
+  M5.Lcd.setCursor(90, 42);
   M5.Lcd.print("CALORIES");
+  M5.Lcd.drawFastHLine(0, 51, 160, COLOR_DIM);
 }
 
 void drawHistoryChrome() {
   M5.Lcd.setTextSize(1);
   M5.Lcd.setTextColor(COLOR_DIM);
-  M5.Lcd.setCursor(44, 4);
+  M5.Lcd.setCursor(58, 4);
   M5.Lcd.print("HOURLY HISTORY");
   drawScreenDots();
   M5.Lcd.drawFastHLine(5, 68, 150, COLOR_DIM);
@@ -328,16 +352,17 @@ void drawHistoryChrome() {
 void drawWifiChrome() {
   M5.Lcd.setTextSize(1);
   M5.Lcd.setTextColor(COLOR_DIM);
-  M5.Lcd.setCursor(44, 4);
+  M5.Lcd.setCursor(58, 4);
   M5.Lcd.print("WI-FI");
   drawScreenDots();
   M5.Lcd.drawFastHLine(0, 14, 160, COLOR_DIM);
 }
 
+
 void drawScreenDots() {
   for (int i = 0; i < SCREEN_COUNT; i++) {
     uint16_t col = (i == currentScreen) ? COLOR_ACCENT : COLOR_DIM;
-    M5.Lcd.fillCircle(147 + i * 5, 4, 1, col);
+    M5.Lcd.fillCircle(143 + i * 5, 4, 1, col);
   }
 }
 
@@ -353,7 +378,7 @@ void updateDynamic() {
 }
 
 void updateStepsDynamic() {
-  M5.Lcd.fillRect(100, 0, 44, 12, COLOR_BG);
+  M5.Lcd.fillRect(55, 0, 30, 12, COLOR_BG);
 
   uint16_t badgeColor;
   const char* label;
@@ -362,13 +387,13 @@ void updateStepsDynamic() {
     case WALKING: badgeColor = COLOR_WALK; label = "WALK"; break;
     default:      badgeColor = COLOR_IDLE; label = "IDLE"; break;
   }
-  M5.Lcd.fillRoundRect(100, 1, 44, 10, 3, badgeColor);
+  M5.Lcd.fillRoundRect(55, 1, 30, 10, 3, badgeColor);
   M5.Lcd.setTextSize(1);
   M5.Lcd.setTextColor(COLOR_BG);
-  M5.Lcd.setCursor(104, 3);
+  M5.Lcd.setCursor(59, 3);
   M5.Lcd.print(label);
 
-  M5.Lcd.fillRect(5, 16, 145, 40, COLOR_BG);
+  M5.Lcd.fillRect(5, 16, 145, 35, COLOR_BG);
   M5.Lcd.setTextSize(4);
   M5.Lcd.setTextColor((stepCount >= DAILY_GOAL) ? COLOR_GOAL : COLOR_ACCENT);
   M5.Lcd.setCursor(5, 18);
@@ -383,7 +408,7 @@ void updateStepsDynamic() {
 }
 
 void updateCadenceDynamic() {
-  M5.Lcd.fillRect(5, 14, 155, 32, COLOR_BG);
+  M5.Lcd.fillRect(5, 14, 155, 24, COLOR_BG);
 
   uint16_t cadColor;
   switch (currentActivity) {
@@ -396,14 +421,14 @@ void updateCadenceDynamic() {
   M5.Lcd.setCursor(5, 16);
   M5.Lcd.print(cadenceSPM);
 
-  M5.Lcd.fillRect(5, 60, 155, 18, COLOR_BG);
+  M5.Lcd.fillRect(5, 55, 155, 12, COLOR_BG);
   M5.Lcd.setTextSize(1);
   M5.Lcd.setTextColor(COLOR_WHITE);
-  M5.Lcd.setCursor(5, 62);
+  M5.Lcd.setCursor(5, 57);
   M5.Lcd.print(stepCount);
 
   int calories = (int)(stepCount * 0.04f);
-  M5.Lcd.setCursor(90, 62);
+  M5.Lcd.setCursor(90, 57);
   M5.Lcd.print(calories);
   M5.Lcd.print(" kcal");
 }
@@ -474,3 +499,4 @@ void updateWifiDynamic() {
     M5.Lcd.print("reconfigure WiFi.");
   }
 }
+
