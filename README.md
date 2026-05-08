@@ -146,10 +146,10 @@ These values are defined near the top of the sketch and can be adjusted to tune 
 
 | Parameter           |   Value | Purpose                                   |
 | ------------------- | ------: | ----------------------------------------- |
-| `WINDOW_SIZE`       |    `10` | Rolling average buffer size               |
+| `WINDOW_SIZE`       |    `20` | Rolling average buffer size               |
 | `PEAK_THRESHOLD`    |  `0.12` | Minimum peak needed to consider a step    |
-| `MIN_STEP_MS`       |   `250` | Minimum time between valid steps          |
-| `VALLEY_RESET`      |  `0.05` | Rearming threshold for the detector       |
+| `MIN_STEP_MS`       |   `300` | Minimum time between valid steps          |
+| `VALLEY_RESET`      |  `0.06` | Rearming threshold for the detector       |
 | `PEAK_MIN_MS`       |    `60` | Minimum duration a peak must be sustained |
 | `CADENCE_WINDOW_MS` |  `5000` | Time window used for cadence calculation  |
 | `WALKING_CADENCE`   |    `60` | Walking threshold in steps/min            |

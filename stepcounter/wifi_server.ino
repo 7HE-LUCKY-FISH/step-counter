@@ -2,6 +2,10 @@
 #include <WebServer.h>
 
 WebServer server(80);
+bool serverStarted = false;
+
+#define WIFI_RETRY_MS 30000
+unsigned long lastWifiRetryMs = 0;
 
 extern int stepCount;
 extern int cadenceSPM;
@@ -26,56 +30,70 @@ void startWiFiServer() {
     delay(2000);
   }
 
-  // Show a connecting screen
   M5.Lcd.fillScreen(TFT_BLACK);
   M5.Lcd.setTextColor(TFT_WHITE);
   M5.Lcd.setTextSize(1);
   M5.Lcd.setCursor(5, 25);
   M5.Lcd.print("Connecting to WiFi...");
   M5.Lcd.setCursor(5, 40);
-  M5.Lcd.print("Or join:");
-  M5.Lcd.setTextColor(0x07FF);
+  M5.Lcd.print("Continuing in 10s if");
   M5.Lcd.setCursor(5, 52);
-  M5.Lcd.print("M5StickC-Step Counter");
+  M5.Lcd.print("no network found.");
 
-  // If no saved credentials, this launches the config hotspot and blocks
-  // until the user completes setup. Otherwise it connects silently.
-  wm.setConfigPortalTimeout(120);
+  // Try to connect using saved credentials only
+  wm.setConnectTimeout(10);
+  wm.setConfigPortalTimeout(0);
   bool connected = wm.autoConnect("M5StickC-Step Counter");
 
   M5.Lcd.fillScreen(TFT_BLACK);
   M5.Lcd.setTextSize(1);
 
-  if (!connected) {
-    M5.Lcd.setTextColor(TFT_RED);
+  if (connected) {
+    beginServer();
+    M5.Lcd.setTextColor(TFT_GREEN);
+    M5.Lcd.setCursor(5, 20);
+    M5.Lcd.print("Connected!");
+    M5.Lcd.setTextColor(TFT_WHITE);
+    M5.Lcd.setCursor(5, 35);
+    M5.Lcd.print("Dashboard at:");
+    M5.Lcd.setTextColor(0x07FF);
+    M5.Lcd.setCursor(5, 50);
+    M5.Lcd.print(WiFi.localIP().toString());
+    delay(3000);
+  } else {
+    M5.Lcd.setTextColor(0x8410);
     M5.Lcd.setCursor(5, 30);
-    M5.Lcd.print("WiFi failed.");
+    M5.Lcd.print("No WiFi. Tracking");
     M5.Lcd.setCursor(5, 45);
-    M5.Lcd.print("Running offline.");
+    M5.Lcd.print("steps offline.");
     delay(2000);
-    return;
   }
 
-  // Show the IP address so the user knows where to go
-  M5.Lcd.setTextColor(TFT_GREEN);
-  M5.Lcd.setCursor(5, 20);
-  M5.Lcd.print("Connected!");
-  M5.Lcd.setTextColor(TFT_WHITE);
-  M5.Lcd.setCursor(5, 35);
-  M5.Lcd.print("Dashboard at:");
-  M5.Lcd.setTextColor(0x07FF);
-  M5.Lcd.setCursor(5, 50);
-  M5.Lcd.print(WiFi.localIP().toString());
-  delay(3000);
+  lastWifiRetryMs = millis();
+}
 
+void beginServer() {
   server.on("/", handleRoot);
   server.on("/data", handleData);
   server.begin();
+  serverStarted = true;
 }
 
 void handleWiFiClient() {
   if (WiFi.status() == WL_CONNECTED) {
+    if (!serverStarted) {
+      // WiFi came up after boot, start the server now
+      beginServer();
+    }
     server.handleClient();
+  } else {
+    serverStarted = false;
+
+    // Periodically try to reconnect
+    if (millis() - lastWifiRetryMs >= WIFI_RETRY_MS) {
+      lastWifiRetryMs = millis();
+      WiFi.reconnect();
+    }
   }
 }
 

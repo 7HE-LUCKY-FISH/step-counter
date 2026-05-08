@@ -1,6 +1,7 @@
 #include <M5StickC.h>
 #include <math.h>
 #include <WiFi.h>
+#include "esp_sleep.h"
 
 // Step algorithm tuning
 #define WINDOW_SIZE       20
@@ -21,9 +22,10 @@
 #define SCREEN_HISTORY  2
 #define SCREEN_WIFI     3
 
-#define DAILY_GOAL    10000
-#define HOURS_TRACKED 12
-#define UI_UPDATE_MS  200
+#define DAILY_GOAL      10000
+#define HOURS_TRACKED   12
+#define UI_UPDATE_MS    200
+#define IDLE_SLEEP_MS   15000UL
 
 // Colors
 #define COLOR_BG        TFT_BLACK
@@ -36,20 +38,23 @@
 #define COLOR_WHITE     TFT_WHITE
 #define COLOR_DIM       0x7BEF
 
-// Rolling average state
+// MPU6886 registers for wake-on-motion
+#define MPU6886_ADDR    0x68
+#define MPU6886_WOM_THR 0x1F
+#define MPU6886_MOT_DET 0x69
+#define MPU6886_INT_EN  0x38
+
 float magBuffer[WINDOW_SIZE];
 int   magIndex    = 0;
 float magSum      = 0.0f;
 bool  bufferReady = false;
 
-// Peak detection state
-float peakMag  = 0.0f;
-bool  armed    = true;
-unsigned long lastStepMs   = 0;
-unsigned long peakStartMs  = 0;
+float peakMag        = 0.0f;
+bool  armed          = true;
+unsigned long lastStepMs     = 0;
+unsigned long peakStartMs    = 0;
 bool          aboveThreshold = false;
 
-// Step and cadence
 int stepCount  = 0;
 int cadenceSPM = 0;
 
@@ -58,24 +63,54 @@ unsigned long stepTimes[CADENCE_BUF_SIZE];
 int stepTimeHead   = 0;
 int stepTimeFilled = 0;
 
-// Hourly history
 int hourlySteps[HOURS_TRACKED];
 int currentHour = 0;
 unsigned long hourStartMs = 0;
 
-// UI state
 int  currentScreen   = SCREEN_STEPS;
 bool needsFullRedraw = true;
 unsigned long lastUiMs = 0;
 
+unsigned long lastMotionMs = 0;
+bool screenOn = true;
+
 enum Activity { IDLE, WALKING, RUNNING };
 Activity currentActivity = IDLE;
+
+
+void imuWriteReg(uint8_t reg, uint8_t val) {
+  Wire1.beginTransmission(MPU6886_ADDR);
+  Wire1.write(reg);
+  Wire1.write(val);
+  Wire1.endTransmission();
+}
+
+void enableMotionInterrupt() {
+  imuWriteReg(MPU6886_WOM_THR, 10);   // ~39mg threshold
+  imuWriteReg(MPU6886_MOT_DET, 0xC0);
+  imuWriteReg(MPU6886_INT_EN,  0x40);
+  esp_sleep_enable_ext0_wakeup(GPIO_NUM_36, 1);
+}
+
+void enterLightSleep() {
+  M5.Lcd.fillScreen(COLOR_BG);
+  M5.Axp.SetLDO2(false);
+  screenOn = false;
+
+  esp_light_sleep_start();
+
+  M5.Axp.SetLDO2(true);
+  screenOn        = true;
+  lastMotionMs    = millis();
+  needsFullRedraw = true;
+}
 
 
 void setup() {
   Serial.begin(115200);
   M5.begin();
   M5.Imu.Init();
+  Wire1.begin(21, 22);
 
   M5.Lcd.setRotation(3);
   M5.Lcd.fillScreen(COLOR_BG);
@@ -84,7 +119,10 @@ void setup() {
   memset(hourlySteps, 0, sizeof(hourlySteps));
   memset(stepTimes,   0, sizeof(stepTimes));
 
-  hourStartMs = millis();
+  hourStartMs  = millis();
+  lastMotionMs = millis();
+
+  enableMotionInterrupt();
   drawFullScreen();
   startWiFiServer();
 }
@@ -93,25 +131,24 @@ void setup() {
 void loop() {
   M5.update();
 
-  // Side button cycles screens
   if (M5.BtnB.wasPressed()) {
     currentScreen = (currentScreen + 1) % SCREEN_COUNT;
     needsFullRedraw = true;
+    lastMotionMs = millis();
   }
 
-  // Front button resets everything (except on WiFi screen, where it does nothing)
   if (M5.BtnA.wasPressed() && currentScreen != SCREEN_WIFI) {
     stepCount      = 0;
     cadenceSPM     = 0;
     stepTimeFilled = 0;
     stepTimeHead   = 0;
     memset(hourlySteps, 0, sizeof(hourlySteps));
-    currentHour = 0;
-    hourStartMs = millis();
+    currentHour  = 0;
+    hourStartMs  = millis();
+    lastMotionMs = millis();
     needsFullRedraw = true;
   }
 
-  // Roll over to the next hourly bucket
   if (millis() - hourStartMs >= 3600000UL) {
     currentHour = (currentHour + 1) % HOURS_TRACKED;
     hourlySteps[currentHour] = 0;
@@ -120,6 +157,10 @@ void loop() {
 
   processAccelerometer();
   handleWiFiClient();
+
+  if (millis() - lastMotionMs >= IDLE_SLEEP_MS) {
+    enterLightSleep();
+  }
 
   if (needsFullRedraw) {
     drawFullScreen();
@@ -140,7 +181,6 @@ void processAccelerometer() {
 
   float mag = sqrtf(ax*ax + ay*ay + az*az);
 
-  // Update rolling average
   magSum -= magBuffer[magIndex];
   magBuffer[magIndex] = mag;
   magSum += mag;
@@ -153,7 +193,10 @@ void processAccelerometer() {
   float delta = mag - avg;
   unsigned long now = millis();
 
-  // Peak/valley state machine
+  if (delta > PEAK_THRESHOLD * 0.5f) {
+    lastMotionMs = now;
+  }
+
   if (armed) {
     if (delta > PEAK_THRESHOLD && !aboveThreshold) {
       aboveThreshold = true;
@@ -194,7 +237,8 @@ void recordStep(unsigned long now) {
   stepTimeHead = (stepTimeHead + 1) % CADENCE_BUF_SIZE;
   if (stepTimeFilled < CADENCE_BUF_SIZE) stepTimeFilled++;
 
-  lastStepMs = now;
+  lastStepMs   = now;
+  lastMotionMs = now;
 }
 
 void updateCadence(unsigned long now) {
@@ -216,6 +260,25 @@ void classifyActivity() {
 }
 
 
+void drawBattery() {
+  float batV   = M5.Axp.GetBatVoltage();
+  int   batPct = (int)constrain((batV - 3.0f) / (4.2f - 3.0f) * 100.0f, 0.0f, 100.0f);
+
+  M5.Lcd.fillRect(0, 0, 40, 10, COLOR_BG);
+  M5.Lcd.setTextSize(1);
+
+  uint16_t col;
+  if      (batPct > 50) col = COLOR_WALK;
+  else if (batPct > 20) col = COLOR_GOAL;
+  else                  col = COLOR_RUN;
+
+  M5.Lcd.setTextColor(col);
+  M5.Lcd.setCursor(0, 2);
+  M5.Lcd.print(batPct);
+  M5.Lcd.print("%");
+}
+
+
 void drawFullScreen() {
   M5.Lcd.fillScreen(COLOR_BG);
   switch (currentScreen) {
@@ -230,7 +293,7 @@ void drawFullScreen() {
 void drawStepsChrome() {
   M5.Lcd.setTextSize(1);
   M5.Lcd.setTextColor(COLOR_DIM);
-  M5.Lcd.setCursor(5, 4);
+  M5.Lcd.setCursor(44, 4);
   M5.Lcd.print("STEPS TODAY");
   drawScreenDots();
   M5.Lcd.drawRect(5, 62, 140, 10, COLOR_DIM);
@@ -241,7 +304,7 @@ void drawStepsChrome() {
 void drawCadenceChrome() {
   M5.Lcd.setTextSize(1);
   M5.Lcd.setTextColor(COLOR_DIM);
-  M5.Lcd.setCursor(5, 4);
+  M5.Lcd.setCursor(44, 4);
   M5.Lcd.print("CADENCE");
   M5.Lcd.setCursor(90, 4);
   M5.Lcd.print("steps/min");
@@ -256,7 +319,7 @@ void drawCadenceChrome() {
 void drawHistoryChrome() {
   M5.Lcd.setTextSize(1);
   M5.Lcd.setTextColor(COLOR_DIM);
-  M5.Lcd.setCursor(5, 4);
+  M5.Lcd.setCursor(44, 4);
   M5.Lcd.print("HOURLY HISTORY");
   drawScreenDots();
   M5.Lcd.drawFastHLine(5, 68, 150, COLOR_DIM);
@@ -265,7 +328,7 @@ void drawHistoryChrome() {
 void drawWifiChrome() {
   M5.Lcd.setTextSize(1);
   M5.Lcd.setTextColor(COLOR_DIM);
-  M5.Lcd.setCursor(5, 4);
+  M5.Lcd.setCursor(44, 4);
   M5.Lcd.print("WI-FI");
   drawScreenDots();
   M5.Lcd.drawFastHLine(0, 14, 160, COLOR_DIM);
@@ -280,6 +343,7 @@ void drawScreenDots() {
 
 
 void updateDynamic() {
+  drawBattery();
   switch (currentScreen) {
     case SCREEN_STEPS:   updateStepsDynamic();   break;
     case SCREEN_CADENCE: updateCadenceDynamic(); break;
@@ -289,7 +353,7 @@ void updateDynamic() {
 }
 
 void updateStepsDynamic() {
-  M5.Lcd.fillRect(100, 0, 60, 14, COLOR_BG);
+  M5.Lcd.fillRect(100, 0, 44, 12, COLOR_BG);
 
   uint16_t badgeColor;
   const char* label;
@@ -298,10 +362,10 @@ void updateStepsDynamic() {
     case WALKING: badgeColor = COLOR_WALK; label = "WALK"; break;
     default:      badgeColor = COLOR_IDLE; label = "IDLE"; break;
   }
-  M5.Lcd.fillRoundRect(103, 1, 52, 12, 3, badgeColor);
+  M5.Lcd.fillRoundRect(100, 1, 44, 10, 3, badgeColor);
   M5.Lcd.setTextSize(1);
   M5.Lcd.setTextColor(COLOR_BG);
-  M5.Lcd.setCursor(107, 3);
+  M5.Lcd.setCursor(104, 3);
   M5.Lcd.print(label);
 
   M5.Lcd.fillRect(5, 16, 145, 40, COLOR_BG);
