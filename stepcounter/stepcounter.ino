@@ -2,10 +2,11 @@
 #include <math.h>
 
 // Step algorithm tuning
-#define WINDOW_SIZE       10
+#define WINDOW_SIZE       20
 #define PEAK_THRESHOLD    0.12f
-#define MIN_STEP_MS       250
-#define VALLEY_RESET      0.05f
+#define MIN_STEP_MS       300
+#define VALLEY_RESET      0.06f
+#define PEAK_MIN_MS       60    // Peak must stay above threshold this long to count
 
 // Cadence / activity thresholds
 #define CADENCE_WINDOW_MS 5000
@@ -42,7 +43,9 @@ bool  bufferReady = false;
 // Peak detection state
 float peakMag  = 0.0f;
 bool  armed    = true;
-unsigned long lastStepMs = 0;
+unsigned long lastStepMs   = 0;
+unsigned long peakStartMs  = 0;  // When the current peak first crossed threshold
+bool          aboveThreshold = false;
 
 // Step and cadence
 int stepCount  = 0;
@@ -148,14 +151,33 @@ void processAccelerometer() {
 
   // Peak/valley state machine
   if (armed) {
-    if (delta > peakMag) peakMag = delta;
-    if (peakMag > PEAK_THRESHOLD && delta < peakMag - VALLEY_RESET) {
-      if (now - lastStepMs > MIN_STEP_MS) recordStep(now);
-      armed   = false;
+    // Track when we first cross the threshold
+    if (delta > PEAK_THRESHOLD && !aboveThreshold) {
+      aboveThreshold = true;
+      peakStartMs    = now;
+    }
+    if (!aboveThreshold && delta <= PEAK_THRESHOLD) {
       peakMag = 0.0f;
     }
+
+    if (aboveThreshold) {
+      if (delta > peakMag) peakMag = delta;
+
+      // Only count the step if we've been above threshold long enough
+      if (peakMag > PEAK_THRESHOLD && delta < peakMag - VALLEY_RESET) {
+        if (now - peakStartMs >= PEAK_MIN_MS && now - lastStepMs > MIN_STEP_MS) {
+          recordStep(now);
+        }
+        armed          = false;
+        aboveThreshold = false;
+        peakMag        = 0.0f;
+      }
+    }
   } else {
-    if (delta < VALLEY_RESET) armed = true;
+    if (delta < VALLEY_RESET) {
+      armed          = true;
+      aboveThreshold = false;
+    }
   }
 
   updateCadence(now);
