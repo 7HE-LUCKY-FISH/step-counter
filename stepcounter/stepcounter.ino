@@ -1,12 +1,13 @@
 #include <M5StickC.h>
 #include <math.h>
+#include <WiFi.h>
 
 // Step algorithm tuning
 #define WINDOW_SIZE       20
 #define PEAK_THRESHOLD    0.12f
 #define MIN_STEP_MS       300
 #define VALLEY_RESET      0.06f
-#define PEAK_MIN_MS       60    // Peak must stay above threshold this long to count
+#define PEAK_MIN_MS       60
 
 // Cadence / activity thresholds
 #define CADENCE_WINDOW_MS 5000
@@ -14,10 +15,11 @@
 #define WALKING_CADENCE   60
 
 // Screen IDs
-#define SCREEN_COUNT    3
+#define SCREEN_COUNT    4
 #define SCREEN_STEPS    0
 #define SCREEN_CADENCE  1
 #define SCREEN_HISTORY  2
+#define SCREEN_WIFI     3
 
 #define DAILY_GOAL    10000
 #define HOURS_TRACKED 12
@@ -44,7 +46,7 @@ bool  bufferReady = false;
 float peakMag  = 0.0f;
 bool  armed    = true;
 unsigned long lastStepMs   = 0;
-unsigned long peakStartMs  = 0;  // When the current peak first crossed threshold
+unsigned long peakStartMs  = 0;
 bool          aboveThreshold = false;
 
 // Step and cadence
@@ -84,6 +86,7 @@ void setup() {
 
   hourStartMs = millis();
   drawFullScreen();
+  startWiFiServer();
 }
 
 
@@ -96,8 +99,8 @@ void loop() {
     needsFullRedraw = true;
   }
 
-  // Front button resets everything
-  if (M5.BtnA.wasPressed()) {
+  // Front button resets everything (except on WiFi screen, where it does nothing)
+  if (M5.BtnA.wasPressed() && currentScreen != SCREEN_WIFI) {
     stepCount      = 0;
     cadenceSPM     = 0;
     stepTimeFilled = 0;
@@ -116,6 +119,7 @@ void loop() {
   }
 
   processAccelerometer();
+  handleWiFiClient();
 
   if (needsFullRedraw) {
     drawFullScreen();
@@ -151,7 +155,6 @@ void processAccelerometer() {
 
   // Peak/valley state machine
   if (armed) {
-    // Track when we first cross the threshold
     if (delta > PEAK_THRESHOLD && !aboveThreshold) {
       aboveThreshold = true;
       peakStartMs    = now;
@@ -163,7 +166,6 @@ void processAccelerometer() {
     if (aboveThreshold) {
       if (delta > peakMag) peakMag = delta;
 
-      // Only count the step if we've been above threshold long enough
       if (peakMag > PEAK_THRESHOLD && delta < peakMag - VALLEY_RESET) {
         if (now - peakStartMs >= PEAK_MIN_MS && now - lastStepMs > MIN_STEP_MS) {
           recordStep(now);
@@ -220,6 +222,7 @@ void drawFullScreen() {
     case SCREEN_STEPS:   drawStepsChrome();   break;
     case SCREEN_CADENCE: drawCadenceChrome(); break;
     case SCREEN_HISTORY: drawHistoryChrome(); break;
+    case SCREEN_WIFI:    drawWifiChrome();    break;
   }
   updateDynamic();
 }
@@ -259,6 +262,15 @@ void drawHistoryChrome() {
   M5.Lcd.drawFastHLine(5, 68, 150, COLOR_DIM);
 }
 
+void drawWifiChrome() {
+  M5.Lcd.setTextSize(1);
+  M5.Lcd.setTextColor(COLOR_DIM);
+  M5.Lcd.setCursor(5, 4);
+  M5.Lcd.print("WI-FI");
+  drawScreenDots();
+  M5.Lcd.drawFastHLine(0, 14, 160, COLOR_DIM);
+}
+
 void drawScreenDots() {
   for (int i = 0; i < SCREEN_COUNT; i++) {
     uint16_t col = (i == currentScreen) ? COLOR_ACCENT : COLOR_DIM;
@@ -272,6 +284,7 @@ void updateDynamic() {
     case SCREEN_STEPS:   updateStepsDynamic();   break;
     case SCREEN_CADENCE: updateCadenceDynamic(); break;
     case SCREEN_HISTORY: updateHistoryDynamic(); break;
+    case SCREEN_WIFI:    updateWifiDynamic();    break;
   }
 }
 
@@ -361,4 +374,39 @@ void updateHistoryDynamic() {
   M5.Lcd.print("now:");
   M5.Lcd.setTextColor(COLOR_ACCENT);
   M5.Lcd.print(hourlySteps[currentHour]);
+}
+
+void updateWifiDynamic() {
+  M5.Lcd.fillRect(0, 16, 160, 64, COLOR_BG);
+  M5.Lcd.setTextSize(1);
+
+  if (WiFi.status() == WL_CONNECTED) {
+    M5.Lcd.setTextColor(COLOR_WALK);
+    M5.Lcd.setCursor(5, 20);
+    M5.Lcd.print("Connected");
+
+    M5.Lcd.setTextColor(COLOR_DIM);
+    M5.Lcd.setCursor(5, 35);
+    M5.Lcd.print("Network:");
+    M5.Lcd.setTextColor(COLOR_WHITE);
+    M5.Lcd.setCursor(5, 45);
+    M5.Lcd.print(WiFi.SSID());
+
+    M5.Lcd.setTextColor(COLOR_DIM);
+    M5.Lcd.setCursor(5, 58);
+    M5.Lcd.print("Dashboard:");
+    M5.Lcd.setTextColor(COLOR_ACCENT);
+    M5.Lcd.setCursor(5, 68);
+    M5.Lcd.print(WiFi.localIP().toString());
+  } else {
+    M5.Lcd.setTextColor(COLOR_RUN);
+    M5.Lcd.setCursor(5, 20);
+    M5.Lcd.print("Not connected");
+
+    M5.Lcd.setTextColor(COLOR_DIM);
+    M5.Lcd.setCursor(5, 38);
+    M5.Lcd.print("Hold A on boot to");
+    M5.Lcd.setCursor(5, 50);
+    M5.Lcd.print("reconfigure WiFi.");
+  }
 }
