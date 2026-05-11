@@ -2,6 +2,7 @@
 #include <math.h>
 #include <WiFi.h>
 #include "esp_sleep.h"
+#include "driver/gpio.h"
 
 // Step algorithm tuning
 #define WINDOW_SIZE       20
@@ -46,6 +47,10 @@
 #define MPU6886_MOT_DET 0x69
 #define MPU6886_INT_EN  0x38
 
+#define BTN_A_WAKE_GPIO GPIO_NUM_37
+#define BTN_B_WAKE_GPIO GPIO_NUM_39
+#define IMU_WAKE_GPIO   GPIO_NUM_36
+
 float magBuffer[WINDOW_SIZE];
 int   magIndex    = 0;
 float magSum      = 0.0f;
@@ -87,11 +92,14 @@ void imuWriteReg(uint8_t reg, uint8_t val) {
   Wire1.endTransmission();
 }
 
-void enableMotionInterrupt() {
-  imuWriteReg(MPU6886_WOM_THR, 10);
-  imuWriteReg(MPU6886_MOT_DET, 0xC0);
-  imuWriteReg(MPU6886_INT_EN,  0x40);
-  esp_sleep_enable_ext0_wakeup(GPIO_NUM_36, 1);
+void enableWakeSources() {
+  gpio_wakeup_enable(BTN_A_WAKE_GPIO, GPIO_INTR_LOW_LEVEL);
+  gpio_wakeup_enable(BTN_B_WAKE_GPIO, GPIO_INTR_LOW_LEVEL);
+  esp_sleep_enable_gpio_wakeup();
+
+   
+  // Keep this disabled until GPIO36 IMU interrupt polarity is verified.
+  // gpio_wakeup_enable(IMU_WAKE_GPIO, GPIO_INTR_HIGH_LEVEL);
 }
 
 void enterLightSleep() {
@@ -102,6 +110,8 @@ void enterLightSleep() {
   esp_light_sleep_start();
 
   M5.Axp.SetLDO2(true);
+  delay(100);
+  M5.update();
   screenOn        = true;
   lastMotionMs    = millis();
   needsFullRedraw = true;
@@ -112,7 +122,7 @@ void setup() {
   Serial.begin(115200);
   M5.begin();
 
-  //setCpuFrequencyMhz(80); drop CPU speed to save power default: 240
+  setCpuFrequencyMhz(120); //drop CPU speed to save power default: 240
   //M5.Axp.ScreenBreath(8); change brightness of screen save battery
   
    M5.Imu.Init();
@@ -128,7 +138,7 @@ void setup() {
   hourStartMs  = millis();
   lastMotionMs = millis();
 
-  enableMotionInterrupt();
+  enableWakeSources();
   drawFullScreen();
   startWiFiServer();
 }
