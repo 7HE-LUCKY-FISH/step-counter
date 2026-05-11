@@ -3,6 +3,7 @@
 #include <WiFi.h>
 #include "esp_sleep.h"
 #include "driver/gpio.h"
+#include "driver/rtc_io.h"
 
 // Step algorithm tuning
 #define WINDOW_SIZE       20
@@ -93,22 +94,25 @@ void imuWriteReg(uint8_t reg, uint8_t val) {
 }
 
 void enableWakeSources() {
-  gpio_wakeup_enable(BTN_A_WAKE_GPIO, GPIO_INTR_LOW_LEVEL);
-  gpio_wakeup_enable(BTN_B_WAKE_GPIO, GPIO_INTR_LOW_LEVEL);
-  esp_sleep_enable_gpio_wakeup();
+  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+  pinMode(BTN_A_WAKE_GPIO, INPUT); //change the buttons later
+  pinMode(BTN_B_WAKE_GPIO, INPUT);
+
 
   // IMU wake-on-motion.
   // GPIO35 is the shared IRQ line; M5Stack example uses active-low wake.
-  pinMode(IMU_WAKE_GPIO, INPUT);
-  M5.Mpu6886.Init();
-  M5.Mpu6886.enableWakeOnMotion(M5.Imu.AFS_16G, 10);
-  esp_sleep_enable_ext0_wakeup(IMU_WAKE_GPIO, 0);
+  rtc_gpio_deinit(IMU_WAKE_GPIO);
+  M5.Imu.Init();
+  M5.Imu.enableWakeOnMotion(M5.Imu.AFS_16G, 10);
 
   // Keep this disabled until GPIO36 IMU interrupt polarity is verified.
   // gpio_wakeup_enable(IMU_WAKE_GPIO, GPIO_INTR_HIGH_LEVEL);
 }
 
 void enterLightSleep() {
+  if (!screenOn) return;
+   
+  enableWakeSources();
   M5.Lcd.fillScreen(COLOR_BG);
   M5.Axp.SetLDO2(false);
   screenOn = false;
@@ -117,9 +121,21 @@ void enterLightSleep() {
 
   M5.Axp.SetLDO2(true);
   delay(100);
-  M5.update();
-  screenOn        = true;
-  lastMotionMs    = millis();
+  rtc_gpio_deinit(IMU_WAKE_GPIO);
+  pinMode(IMU_WAKE_GPIO, INPUT);
+  Wire1.begin(21, 22);
+  M5.Imu.Init();
+
+   
+  unsigned long now = millis();
+  screenOn = true;
+  lastMotionMs = now;
+  stayAwakeUntilMs = now + POST_WAKE_AWAKE_MS;
+  armed = true;
+  aboveThreshold = false;
+  peakMag = 0.0f;
+  peakStartMs = 0;
+   
   needsFullRedraw = true;
 }
 
@@ -179,10 +195,13 @@ void loop() {
 
   processAccelerometer();
   handleWiFiClient();
-
-  if (millis() - lastMotionMs >= IDLE_SLEEP_MS) {
-    enterLightSleep();
-  }
+   
+   unsigned long now = millis();
+   
+   if (screenOn && now >= stayAwakeUntilMs && 
+      now - lastMotionMs >= IDLE_SLEEP_MS) {
+     enterLightSleep();
+   }
 
   if (needsFullRedraw) {
     drawFullScreen();
