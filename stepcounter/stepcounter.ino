@@ -28,6 +28,7 @@
 #define HOURS_TRACKED   12
 #define UI_UPDATE_MS    200
 #define IDLE_SLEEP_MS   15000UL
+#define POST_WAKE_AWAKE_MS  30000UL
    // M5StickC battery capacity
 
 // Colors
@@ -95,18 +96,24 @@ void imuWriteReg(uint8_t reg, uint8_t val) {
 
 void enableWakeSources() {
   esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
-  pinMode(BTN_A_WAKE_GPIO, INPUT); //change the buttons later
+
+  // Button wake sources.
+  pinMode(BTN_A_WAKE_GPIO, INPUT);
   pinMode(BTN_B_WAKE_GPIO, INPUT);
 
+  gpio_wakeup_enable(BTN_A_WAKE_GPIO, GPIO_INTR_LOW_LEVEL);
+  gpio_wakeup_enable(BTN_B_WAKE_GPIO, GPIO_INTR_LOW_LEVEL);
+  esp_sleep_enable_gpio_wakeup();
 
-  // IMU wake-on-motion.
-  // GPIO35 is the shared IRQ line; M5Stack example uses active-low wake.
+  // IMU wake-on-motion source.
   rtc_gpio_deinit(IMU_WAKE_GPIO);
+  pinMode(IMU_WAKE_GPIO, INPUT);
+
   M5.Imu.Init();
   M5.Imu.enableWakeOnMotion(M5.Imu.AFS_16G, 10);
 
-  // Keep this disabled until GPIO36 IMU interrupt polarity is verified.
-  // gpio_wakeup_enable(IMU_WAKE_GPIO, GPIO_INTR_HIGH_LEVEL);
+  // IMU interrupt wake source.
+  esp_sleep_enable_ext0_wakeup(IMU_WAKE_GPIO, 0);
 }
 
 void enterLightSleep() {
@@ -126,7 +133,7 @@ void enterLightSleep() {
   Wire1.begin(21, 22);
   M5.Imu.Init();
 
-   
+   M5.update();
   unsigned long now = millis();
   screenOn = true;
   lastMotionMs = now;
@@ -159,7 +166,7 @@ void setup() {
 
   hourStartMs  = millis();
   lastMotionMs = millis();
-
+  stayAwakeUntilMs = millis() + STARTUP_AWAKE_MS;
   enableWakeSources();
   drawFullScreen();
   startWiFiServer();
