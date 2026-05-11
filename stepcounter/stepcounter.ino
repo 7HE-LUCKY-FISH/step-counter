@@ -49,7 +49,7 @@
 
 #define BTN_A_WAKE_GPIO GPIO_NUM_37
 #define BTN_B_WAKE_GPIO GPIO_NUM_39
-#define IMU_WAKE_GPIO   GPIO_NUM_36
+#define IMU_WAKE_GPIO   GPIO_NUM_35
 
 float magBuffer[WINDOW_SIZE];
 int   magIndex    = 0;
@@ -93,11 +93,16 @@ void imuWriteReg(uint8_t reg, uint8_t val) {
 }
 
 void enableWakeSources() {
+  imuWriteReg(MPU6886_WOM_THR, 10);
+  imuWriteReg(MPU6886_MOT_DET, 0xC0);
+  imuWriteReg(MPU6886_INT_EN, 0x40);
+   
+   esp_sleep_enable_ext0_wakeup(IMU_WAKE_GPIO, 0);
+   
   gpio_wakeup_enable(BTN_A_WAKE_GPIO, GPIO_INTR_LOW_LEVEL);
   gpio_wakeup_enable(BTN_B_WAKE_GPIO, GPIO_INTR_LOW_LEVEL);
   esp_sleep_enable_gpio_wakeup();
 
-   
   // Keep this disabled until GPIO36 IMU interrupt polarity is verified.
   // gpio_wakeup_enable(IMU_WAKE_GPIO, GPIO_INTR_HIGH_LEVEL);
 }
