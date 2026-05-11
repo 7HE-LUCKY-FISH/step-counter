@@ -27,8 +27,9 @@
 #define DAILY_GOAL      10000
 #define HOURS_TRACKED   12
 #define UI_UPDATE_MS    200
-#define IDLE_SLEEP_MS   15000UL
-#define POST_WAKE_AWAKE_MS  30000UL
+#define IDLE_SLEEP_MS        15000UL
+#define STARTUP_AWAKE_MS     60000UL
+#define POST_WAKE_AWAKE_MS   30000UL
    // M5StickC battery capacity
 
 // Colors
@@ -81,7 +82,9 @@ bool needsFullRedraw = true;
 unsigned long lastUiMs = 0;
 
 unsigned long lastMotionMs = 0;
+unsigned long stayAwakeUntilMs = 0;
 bool screenOn = true;
+
 
 enum Activity { IDLE, WALKING, RUNNING };
 Activity currentActivity = IDLE;
@@ -154,8 +157,8 @@ void setup() {
   setCpuFrequencyMhz(120); //drop CPU speed to save power default: 240
   //M5.Axp.ScreenBreath(8); change brightness of screen save battery
   
-   M5.Imu.Init();
   Wire1.begin(21, 22);
+  M5.Imu.Init();
 
   M5.Lcd.setRotation(3);
   M5.Lcd.fillScreen(COLOR_BG);
