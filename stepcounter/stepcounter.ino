@@ -2,6 +2,8 @@
 #include <math.h>
 #include <WiFi.h>
 #include "esp_sleep.h"
+#include "driver/gpio.h"
+#include "driver/rtc_io.h"
 
 // Step algorithm tuning
 #define WINDOW_SIZE       20
@@ -25,7 +27,9 @@
 #define DAILY_GOAL      10000
 #define HOURS_TRACKED   12
 #define UI_UPDATE_MS    200
-#define IDLE_SLEEP_MS   15000UL
+#define IDLE_SLEEP_MS        15000UL
+#define STARTUP_AWAKE_MS     60000UL
+#define POST_WAKE_AWAKE_MS   30000UL
    // M5StickC battery capacity
 
 // Colors
@@ -45,6 +49,10 @@
 #define MPU6886_WOM_THR 0x1F
 #define MPU6886_MOT_DET 0x69
 #define MPU6886_INT_EN  0x38
+
+#define BTN_A_WAKE_GPIO GPIO_NUM_37
+#define BTN_B_WAKE_GPIO GPIO_NUM_39
+#define IMU_WAKE_GPIO   GPIO_NUM_35
 
 float magBuffer[WINDOW_SIZE];
 int   magIndex    = 0;
@@ -74,7 +82,9 @@ bool needsFullRedraw = true;
 unsigned long lastUiMs = 0;
 
 unsigned long lastMotionMs = 0;
+unsigned long stayAwakeUntilMs = 0;
 bool screenOn = true;
+
 
 enum Activity { IDLE, WALKING, RUNNING };
 Activity currentActivity = IDLE;
@@ -87,14 +97,32 @@ void imuWriteReg(uint8_t reg, uint8_t val) {
   Wire1.endTransmission();
 }
 
-void enableMotionInterrupt() {
-  imuWriteReg(MPU6886_WOM_THR, 10);
-  imuWriteReg(MPU6886_MOT_DET, 0xC0);
-  imuWriteReg(MPU6886_INT_EN,  0x40);
-  esp_sleep_enable_ext0_wakeup(GPIO_NUM_36, 1);
+void enableWakeSources() {
+  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+
+  // Button wake sources.
+  pinMode(BTN_A_WAKE_GPIO, INPUT);
+  pinMode(BTN_B_WAKE_GPIO, INPUT);
+
+  gpio_wakeup_enable(BTN_A_WAKE_GPIO, GPIO_INTR_LOW_LEVEL);
+  gpio_wakeup_enable(BTN_B_WAKE_GPIO, GPIO_INTR_LOW_LEVEL);
+  esp_sleep_enable_gpio_wakeup();
+
+  // IMU wake-on-motion source.
+  rtc_gpio_deinit(IMU_WAKE_GPIO);
+  pinMode(IMU_WAKE_GPIO, INPUT);
+
+  M5.Mpu6886.Init();
+  M5.Mpu6886.enableWakeOnMotion(M5.Mpu6886.AFS_16G, 10);
+
+  // IMU interrupt wake source.
+  esp_sleep_enable_ext0_wakeup(IMU_WAKE_GPIO, 0);
 }
 
 void enterLightSleep() {
+  if (!screenOn) return;
+   
+  enableWakeSources();
   M5.Lcd.fillScreen(COLOR_BG);
   M5.Axp.SetLDO2(false);
   screenOn = false;
@@ -102,8 +130,22 @@ void enterLightSleep() {
   esp_light_sleep_start();
 
   M5.Axp.SetLDO2(true);
-  screenOn        = true;
-  lastMotionMs    = millis();
+  delay(100);
+  rtc_gpio_deinit(IMU_WAKE_GPIO);
+  pinMode(IMU_WAKE_GPIO, INPUT);
+  Wire1.begin(21, 22);
+  M5.Imu.Init();
+
+   M5.update();
+  unsigned long now = millis();
+  screenOn = true;
+  lastMotionMs = now;
+  stayAwakeUntilMs = now + POST_WAKE_AWAKE_MS;
+  armed = true;
+  aboveThreshold = false;
+  peakMag = 0.0f;
+  peakStartMs = 0;
+   
   needsFullRedraw = true;
 }
 
@@ -112,11 +154,11 @@ void setup() {
   Serial.begin(115200);
   M5.begin();
 
-  //setCpuFrequencyMhz(80); drop CPU speed to save power default: 240
+  setCpuFrequencyMhz(120); //drop CPU speed to save power default: 240
   //M5.Axp.ScreenBreath(8); change brightness of screen save battery
   
-   M5.Imu.Init();
   Wire1.begin(21, 22);
+  M5.Imu.Init();
 
   M5.Lcd.setRotation(3);
   M5.Lcd.fillScreen(COLOR_BG);
@@ -127,8 +169,8 @@ void setup() {
 
   hourStartMs  = millis();
   lastMotionMs = millis();
-
-  enableMotionInterrupt();
+  stayAwakeUntilMs = millis() + STARTUP_AWAKE_MS;
+  enableWakeSources();
   drawFullScreen();
   startWiFiServer();
 }
@@ -163,10 +205,13 @@ void loop() {
 
   processAccelerometer();
   handleWiFiClient();
-
-  if (millis() - lastMotionMs >= IDLE_SLEEP_MS) {
-    enterLightSleep();
-  }
+   
+   unsigned long now = millis();
+   
+   if (screenOn && now >= stayAwakeUntilMs && 
+      now - lastMotionMs >= IDLE_SLEEP_MS) {
+     enterLightSleep();
+   }
 
   if (needsFullRedraw) {
     drawFullScreen();
