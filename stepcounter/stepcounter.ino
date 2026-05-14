@@ -112,8 +112,8 @@ void enableWakeSources() {
   rtc_gpio_deinit(IMU_WAKE_GPIO);
   pinMode(IMU_WAKE_GPIO, INPUT);
 
-  M5.Imu.Init();
-  M5.Imu.enableWakeOnMotion(M5.Imu.AFS_16G, 10);
+  M5.Mpu6886.Init();
+  M5.Mpu6886.enableWakeOnMotion(M5.Mpu6886.AFS_16G, 10);
 
   // IMU interrupt wake source.
   esp_sleep_enable_ext0_wakeup(IMU_WAKE_GPIO, 0);
