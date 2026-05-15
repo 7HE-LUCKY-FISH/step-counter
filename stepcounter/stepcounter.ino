@@ -14,8 +14,8 @@
 
 // Cadence / activity thresholds
 #define CADENCE_WINDOW_MS 5000
-#define RUNNING_CADENCE   140
-#define WALKING_CADENCE   60
+#define RUNNING_CADENCE   100
+#define WALKING_CADENCE   50
 
 // Screen IDs
 #define SCREEN_COUNT    4
