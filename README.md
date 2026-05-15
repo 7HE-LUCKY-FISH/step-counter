@@ -104,13 +104,14 @@ To reconfigure WiFi (e.g. when switching networks), hold **BtnA** while the devi
 ## Installation and Upload
 
 1. Install the **Arduino IDE**.
-2. Install the **M5Stack board manager/package, version 2.0.17** and select **M5StickC** as the target board.
-3. Install the [required Arduino libraries](#required-arduino-libraries).
-4. Clone this repository or download the source.
-5. Open `stepcounter.ino` in Arduino IDE.
-6. Connect your M5StickC by USB.
-7. Select the correct board and serial port.
-8. Compile and upload the sketch.
+2. Go to File > Preferences and paste this link into Additional Boards Manager URLs: https://dl.espressif.com/dl/package_esp32_index.json.
+3. Install the **ESP32 board manager/package by Espressif, version 2.0.17** and select **M5StickC** as the target board.
+4. Install the [required Arduino libraries](#required-arduino-libraries).
+5. Clone this repository or download the source.
+6. Open `stepcounter.ino` in Arduino IDE.
+7. Connect your M5StickC by USB.
+8. Select the correct board and serial port.
+9. Compile and upload the sketch.
 
 ## How It Works
 
