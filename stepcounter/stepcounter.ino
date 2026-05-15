@@ -14,7 +14,7 @@
 
 // Cadence / activity thresholds
 #define CADENCE_WINDOW_MS 5000
-#define RUNNING_CADENCE   100
+#define RUNNING_CADENCE   84
 #define WALKING_CADENCE   50
 
 // Screen IDs
@@ -154,7 +154,7 @@ void setup() {
   Serial.begin(115200);
   M5.begin();
 
-  setCpuFrequencyMhz(120); //drop CPU speed to save power default: 240
+  setCpuFrequencyMhz(180); //drop CPU speed to save power default: 240
   //M5.Axp.ScreenBreath(8); change brightness of screen save battery
   
   Wire1.begin(21, 22);
