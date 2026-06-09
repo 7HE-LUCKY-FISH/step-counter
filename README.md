@@ -1,6 +1,6 @@
 # Step Counter
 
-Arduino-based step counter for the **M5StickC** that uses the onboard IMU to detect steps and display activity stats directly on the device screen.
+Arduino-based step counter for the **M5StickC** and compatible with updated versions, that uses the onboard IMU to detect steps and display activity stats directly on the device screen.
 
 This version goes beyond a basic step count and adds a multi-screen interface with **cadence tracking**, **activity classification**, **hourly step history**, a **daily goal progress bar**, a **calorie estimate**, and a **live web dashboard** accessible from any browser on the same network.
 
